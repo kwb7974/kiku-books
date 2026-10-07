@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f5f2eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="聴く本">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>聴く本</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-180.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="聴く本 ホーム"><span class="brand-mark" aria-hidden="true">◖</span>聴く本</a>
+    <button id="import-button" class="secondary">＋ 本を追加</button>
+    <input id="import-file" type="file" accept=".zip,application/zip" hidden>
+  </header>
+  <main>
+    <aside class="shelf" aria-labelledby="shelf-title">
+      <div class="section-heading"><h1 id="shelf-title">本棚</h1><span id="book-count"></span></div>
+      <p class="intro">積んでいた一冊を、耳から。</p>
+      <div id="books" class="books"></div>
+      <div id="empty" class="empty" hidden><p>まだ本がありません。</p><p>「本を追加」から、再生用ZIPを選んでください。</p></div>
+      <p id="connection" class="connection">本棚を開いています…</p>
+    </aside>
+    <section id="player" class="player" aria-labelledby="book-title" hidden>
+      <div class="book-heading"><div class="cover" aria-hidden="true"><div class="cover-rule"></div><span id="cover-letter">本</span><small>聴く本</small></div>
+        <div><p class="eyebrow" id="book-details"></p><h2 id="book-title"></h2><p id="book-position" class="muted"></p></div>
+      </div>
+      <div class="transport">
+        <p id="chapter-count" class="eyebrow"></p><h3 id="chapter-title"></h3>
+        <input id="seek" class="seek" type="range" min="0" max="1" value="0" step="0.1" aria-label="再生位置" disabled>
+        <div class="times"><span id="elapsed">0:00</span><span id="duration">0:00</span></div>
+        <div class="main-controls"><button id="back" class="skip" aria-label="15秒戻る" disabled>↶<span>15秒</span></button><button id="play" class="play" aria-label="再生" disabled><span id="play-symbol" aria-hidden="true">▶</span></button><button id="forward" class="skip" aria-label="15秒進む" disabled>↷<span>15秒</span></button></div>
+        <div class="settings"><label for="speed">再生速度 <select id="speed" aria-label="再生速度"></select></label><span id="resume-note">再生位置はこの端末に保存</span></div>
+      </div>
+      <section class="chapter-section" aria-labelledby="chapters-title"><div class="section-heading"><h3 id="chapters-title">目次</h3><span id="chapter-total"></span></div><ol id="chapters"></ol></section>
+      <div class="book-actions"><button id="save-book" class="secondary">この端末に音声を保存</button><button id="remove-book" class="text-button">端末の保存を削除</button></div>
+    </section>
+    <div id="welcome" class="welcome"><div class="welcome-mark" aria-hidden="true">◖</div><h2>読みたい本を、聴く時間に。</h2><p>章を選んで、あなたの速さで。</p></div>
+  </main>
+  <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+  <footer><details><summary>iPhoneでの使い方</summary><ol><li>Safariの共有メニューから「ホーム画面に追加」します。</li><li>追加した「聴く本」のアイコンから開きます。</li><li>「本を追加」で、iCloud Driveにある本のZIPを選びます。</li></ol><p>本棚から本を選び、再生ボタンを押します。目次から章を選べます。速度は1〜3.5倍です。続きの位置と速度は自動で保存されます。</p><p>音声はこの端末内で再生します。書籍や音声を外部へ送信する処理はありません。</p><p id="storage-note">元のZIPはiCloud Driveに残してください。ブラウザのデータを消すと、保存した本と再生位置も消えます。</p><p id="offline-note"></p></details></footer>
+  <audio id="audio" preload="metadata" playsinline></audio>
+</body>
+</html>
