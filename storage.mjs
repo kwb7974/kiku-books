@@ -1,8 +1,10 @@
 let connection;
 export function openLibrary() {
   if (!connection) connection = new Promise((resolve, reject) => {
-    const request = indexedDB.open('reading-books-player', 1);
-    request.onupgradeneeded = () => {
+    const request = indexedDB.open('reading-books-player', 2);
+    request.onupgradeneeded = event => {
+      if (event.oldVersion < 2) request.result.createObjectStore('clips', {keyPath: ['book_id', 'id']});
+      if (event.oldVersion >= 1) return;
       request.result.createObjectStore('books', {keyPath: 'book_id'});
       request.result.createObjectStore('audios', {keyPath: ['book_id', 'chapter_id']});
     };
@@ -17,7 +19,7 @@ async function read(store, key) {
   const db = await openLibrary();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(store);
-    const request = key === undefined ? tx.objectStore(store).getAll() : tx.objectStore(store).get(key);
+    const request = key === undefined || key instanceof IDBKeyRange ? tx.objectStore(store).getAll(key) : tx.objectStore(store).get(key);
     tx.oncomplete = () => resolve(request.result);
     tx.onabort = () => reject(tx.error);
     request.onerror = () => reject(request.error);
@@ -72,5 +74,18 @@ export async function removeBook(book) {
     cursor.onsuccess = () => { const item = cursor.result; if (item) { item.delete(); item.continue(); } };
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error);
+  });
+}
+
+export const listClips = bookId => read('clips', IDBKeyRange.bound([bookId, ''], [bookId, '\uffff']));
+
+export async function changeClips(bookId, {put = [], remove = []} = {}) {
+  const db = await openLibrary();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('clips', 'readwrite');
+    for (const clip of put) tx.objectStore('clips').put({...clip, book_id: bookId});
+    for (const id of remove) tx.objectStore('clips').delete([bookId, id]);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error || new Error('クリップを保存できませんでした。'));
   });
 }
