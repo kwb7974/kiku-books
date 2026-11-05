@@ -1,5 +1,5 @@
-import {RATES, formatTime, validateBook, resolveProgress, readBundle} from './core.mjs';
-import {listBooks, readAudio, storeBook, storeAudio, removeBook} from './storage.mjs';
+import {RATES, formatTime, validateBook, resolveProgress, readBundle, bookToc, tocAncestors, currentCueIndex, hasClips, makeClip, clipExport, clipFilename, clipPlace} from './core.mjs';
+import {listBooks, readAudio, storeBook, storeAudio, removeBook, listClips, changeClips} from './storage.mjs';
 import {SERVER_LIBRARY} from './config.mjs';
 
 const $ = id => document.getElementById(id);
@@ -17,6 +17,232 @@ let books = [], current = null, chapterIndex = 0, sourceURL = null, selection = 
 let dragging = false, saveAt = 0, noticeTimer, persistenceFailed = false, audioReady = false, importing = false;
 const memoryProgress = new Map();
 const savingBooks = new Set();
+const tocStates = new Map();
+let undoSelection = null, undoTimer;
+
+let displayedCue = -1;
+let clips = [], clipsBookId = null, clipsLoading = false, clipBusy = false, clipUndo = null, clipUndoTimer;
+
+function hideClipUndo() {
+  clearTimeout(clipUndoTimer); clipUndo = null;
+  $('clip-undo').hidden = true; $('clip-sheet-undo').hidden = true;
+}
+function placeClipUndo() {
+  $('clip-undo').hidden = !clipUndo || $('clip-sheet').open;
+  $('clip-sheet-undo').hidden = !clipUndo || !$('clip-sheet').open;
+}
+function offerClipUndo(text, action) {
+  hideClipUndo(); clipUndo = action;
+  for (const id of ['clip-undo', 'clip-sheet-undo']) $(id).querySelector('span').textContent = text;
+  placeClipUndo();
+  clipUndoTimer = setTimeout(hideClipUndo, 6000);
+}
+async function refreshClips(book) {
+  if (current?.book_id !== book.book_id) return;
+  if (clipsBookId !== book.book_id) { clips = []; hideClipUndo(); }
+  clipsBookId = book.book_id; clipsLoading = true; renderClips();
+  try {
+    const saved = await listClips(book.book_id);
+    if (current?.book_id === book.book_id) clips = saved.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  } catch (error) { tell(describeError(error), true); }
+  finally { if (current?.book_id === book.book_id) { clipsLoading = false; renderClips(); } }
+}
+function renderClips() {
+  $('clip-controls').hidden = !hasClips(current);
+  $('add-clip').disabled = loading || !audioReady || clipBusy || clipsLoading || currentCueIndex(current?.chapters[chapterIndex], audio.currentTime) < 0;
+  $('open-clips').disabled = clipsLoading;
+  $('clip-count').textContent = String(clips.length);
+  $('export-clips').disabled = !current?.vault_book_id || !clips.length || clipBusy || clipsLoading;
+  $('clip-export-reason').textContent = !current?.vault_book_id ? '本のID（vault_book_id）がないため、Macへ送れません。対応したZIPを追加してください。' : '';
+  $('clips').replaceChildren();
+  if (!clips.length) {
+    const empty = document.createElement('li'); empty.className = 'empty';
+    empty.textContent = clipsLoading ? 'クリップを読んでいます…' : 'まだクリップはありません。「＋クリップ」で、画面に出ている区間の原本の文を保存します。';
+    $('clips').append(empty);
+  }
+  for (const clip of clips) {
+    const li = document.createElement('li'); li.className = 'clip-item';
+    const play = document.createElement('button'); play.className = 'clip-play'; play.disabled = clipBusy;
+    for (const [name, text] of [['clip-place', clipPlace(current, clip.chapter_id)], ['clip-text', clip.text],
+      ['clip-go', '▶ この区間から再生'], ['clip-sent', clip.export_status || '未送信']]) {
+      const span = document.createElement('span'); span.className = name; span.textContent = text; play.append(span);
+    }
+    play.addEventListener('click', async () => {
+      const index = current.chapters.findIndex(chapter => chapter.id === clip.chapter_id);
+      if (index < 0) { tell('このクリップの音声項目がありません。', true); return; }
+      $('clip-sheet').close();
+      await selectChapter(current, index, {seconds: clip.start_seconds, autoplay: true});
+    });
+    const del = document.createElement('button'); del.className = 'clip-delete'; del.disabled = clipBusy;
+    del.setAttribute('aria-label', `クリップを消す：${clip.text}`);
+    del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+    del.addEventListener('click', () => {
+      const book = current;
+      void editClips(book, {remove: [clip.id]}, () => offerClipUndo('クリップを消しました。', () => editClips(book, {put: [clip]})));
+    });
+    li.append(play, del); $('clips').append(li);
+  }
+}
+async function editClips(book, change, after) {
+  if (clipBusy) return;
+  clipBusy = true; renderClips();
+  try {
+    await changeClips(book.book_id, change);
+    if (current?.book_id === book.book_id) {
+      await refreshClips(book);
+      if (current?.book_id === book.book_id) after?.();
+    }
+  } catch (error) { tell(describeError(error), true); }
+  finally { clipBusy = false; renderClips(); }
+}
+$('add-clip').addEventListener('click', () => {
+  if ($('add-clip').disabled) return;
+  const book = current, chapter = book.chapters[chapterIndex];
+  const clip = makeClip(chapter, chapter.text_cues[displayedCue].start_seconds);
+  void editClips(book, {put: [clip]}, () => offerClipUndo('クリップしました。', () => editClips(book, {remove: [clip.id]})));
+});
+for (const id of ['clip-undo', 'clip-sheet-undo']) $(id).querySelector('button').addEventListener('click', () => {
+  if (clipBusy) return;
+  const action = clipUndo; hideClipUndo(); void action?.();
+});
+$('open-clips').addEventListener('click', () => { renderClips(); $('clip-sheet').showModal(); placeClipUndo(); $('close-clips').focus(); });
+$('close-clips').addEventListener('click', () => $('clip-sheet').close());
+$('clip-sheet').addEventListener('click', event => { if (event.target === $('clip-sheet')) $('clip-sheet').close(); });
+$('clip-sheet').addEventListener('close', () => { placeClipUndo(); $('open-clips').focus(); });
+$('export-clips').addEventListener('click', async () => {
+  if ($('export-clips').disabled) return;
+  const book = current, sending = [...clips], data = clipExport(book, sending);
+  const file = new File([JSON.stringify(data, null, 2) + '\n'], clipFilename(data), {type: 'application/json'});
+  clipBusy = true; renderClips();
+  try {
+    let status;
+    if (navigator.canShare?.({files: [file]}) && navigator.share) {
+      // ユーザーの操作権を保つため、共有を開く前にはawaitしない。
+      await navigator.share({files: [file], title: `${book.title}のクリップ`});
+      status = '共有済み（保存先で確認してください）';
+    } else {
+      const url = URL.createObjectURL(file), link = document.createElement('a');
+      link.href = url; link.download = file.name; document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      status = 'ダウンロード済み（保存先で確認してください）';
+    }
+    await changeClips(book.book_id, {put: sending.map(clip => ({...clip, exported_at: data.exported_at, export_status: status}))});
+    await refreshClips(book);
+    tell('iCloud Drive/聴く本のクリップ/ に保存してください。');
+  } catch (error) {
+    if (error.name !== 'AbortError') tell(describeError(error), true);
+  } finally { clipBusy = false; renderClips(); }
+});
+
+function tocState() {
+  if (!tocStates.has(current.book_id)) {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(`listening:toc:${current.book_id}`)); } catch { /* メモリー内で保持する */ }
+    tocStates.set(current.book_id, new Set(Array.isArray(saved) ? saved : tocAncestors(bookToc(current), current.chapters[chapterIndex].id) || []));
+  }
+  return tocStates.get(current.book_id);
+}
+
+function saveToc() {
+  try { localStorage.setItem(`listening:toc:${current.book_id}`, JSON.stringify([...tocState()])); }
+  catch { /* 再生位置の保存とは分け、開閉はメモリー内で保持する */ }
+}
+
+function hideUndo() {
+  clearTimeout(undoTimer); undoSelection = null; $('toc-undo').hidden = true;
+}
+
+function closeToc() { $('toc-sheet').close(); }
+
+async function chooseToc(index) {
+  closeToc();
+  if (index === chapterIndex) {
+    if (audio.paused) await startPlaying(); else audio.pause();
+    return;
+  }
+  const from = {book: current, index: chapterIndex, seconds: audio.currentTime, rate: audio.playbackRate, autoplay: !audio.paused};
+  hideUndo();
+  await selectChapter(current, index, {autoplay: true});
+  if (current !== from.book || chapterIndex !== index) return;
+  undoSelection = from; $('toc-undo').hidden = false;
+  undoTimer = setTimeout(hideUndo, 6000);
+}
+
+function renderToc() {
+  const nodes = bookToc(current), open = tocState();
+  const active = tocAncestors(nodes, current.chapters[chapterIndex].id) || [];
+  const parents = [];
+  const descendants = node => [node.chapter_id, ...(node.children || []).flatMap(descendants)].filter(Boolean);
+  $('chapters').replaceChildren();
+  function leaf(node, depth, start = false) {
+    const index = current.chapters.findIndex(c => c.id === node.chapter_id), chapter = current.chapters[index];
+    const li = document.createElement('li'), button = document.createElement('button');
+    button.className = 'chapter-button'; button.style.setProperty('--depth', depth);
+    button.setAttribute('aria-current', String(index === chapterIndex));
+    const icon = document.createElement('span'); icon.className = 'chapter-number'; icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = index === chapterIndex && !audio.paused ? 'Ⅱ' : '▶';
+    const name = document.createElement('span'); name.className = 'chapter-name';
+    name.textContent = start ? `（${node.title.split(/[　 :：]/)[0]}のはじめ）` : node.title;
+    const duration = document.createElement('span'); duration.className = 'chapter-duration'; duration.textContent = formatTime(chapter.audio.seconds);
+    button.append(icon, name, duration); button.addEventListener('click', () => chooseToc(index));
+    li.append(button); return li;
+  }
+  function walk(list, ol, depth) {
+    for (const node of list) {
+      if (!node.children) { ol.append(leaf(node, depth)); continue; }
+      parents.push(node.id);
+      const li = document.createElement('li'), button = document.createElement('button');
+      button.className = 'toc-parent'; button.style.setProperty('--depth', depth);
+      button.setAttribute('aria-expanded', String(open.has(node.id)));
+      const icon = document.createElement('span'); icon.className = 'chevron'; icon.textContent = '›'; icon.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span'); name.className = 'chapter-name'; name.textContent = node.title;
+      if (!open.has(node.id) && active.includes(node.id)) {
+        const mark = document.createElement('small'); mark.className = 'toc-current'; mark.textContent = '再生中'; name.append(mark);
+      }
+      const ids = descendants(node), summary = document.createElement('span'); summary.className = 'chapter-duration';
+      summary.textContent = `${ids.length}項目 · ${formatTime(current.chapters.filter(c => ids.includes(c.id)).reduce((sum, c) => sum + c.audio.seconds, 0))}`;
+      button.append(icon, name, summary); li.append(button); ol.append(li);
+      button.addEventListener('click', () => {
+        const focused = node.id;
+        open.has(node.id) ? open.delete(node.id) : open.add(node.id); saveToc(); renderToc();
+        [...$('chapters').querySelectorAll('.toc-parent')].find(b => b.dataset.id === focused)?.focus({preventScroll: true});
+      });
+      button.dataset.id = node.id;
+      const children = document.createElement('ol'); children.hidden = !open.has(node.id); li.append(children);
+      if (node.chapter_id) children.append(leaf(node, depth + 1, true));
+      walk(node.children, children, depth + 1);
+    }
+  }
+  walk(nodes, $('chapters'), 0);
+  if ($('toc-sheet').open) sizeToc();
+  const allOpen = parents.every(id => open.has(id));
+  $('toggle-all').hidden = !parents.length;
+  $('toggle-all').setAttribute('aria-label', allOpen ? '目次をすべて閉じる' : '目次をすべて開く');
+  $('toggle-all').setAttribute('aria-expanded', String(allOpen));
+  $('toggle-all').onclick = () => {
+    tocStates.set(current.book_id, allOpen ? new Set() : new Set(parents)); saveToc(); renderToc();
+  };
+}
+
+function sizeToc() {
+  const body = $('toc-sheet').querySelector('.sheet-body');
+  body.style.setProperty('--sticky-limit', `${Math.max(0, Math.min(132, body.clientHeight - 138))}px`);
+}
+window.addEventListener('resize', () => { if ($('toc-sheet').open) sizeToc(); });
+
+$('open-toc').addEventListener('click', () => {
+  renderToc(); $('toc-sheet').showModal();
+  sizeToc();
+  $('chapters').querySelector('[aria-current="true"]')?.scrollIntoView({block: 'end'});
+  $('close-toc').focus();
+});
+$('close-toc').addEventListener('click', closeToc);
+$('toc-sheet').addEventListener('click', event => { if (event.target === $('toc-sheet')) closeToc(); });
+$('toc-sheet').addEventListener('close', () => $('open-toc').focus());
+$('undo-toc').addEventListener('click', async () => {
+  const from = undoSelection; hideUndo();
+  if (from) await selectChapter(from.book, from.index, from);
+});
 
 function tell(text, error = false, persistent = false) {
   clearTimeout(noticeTimer);
@@ -60,7 +286,7 @@ function renderShelf() {
     button.setAttribute('aria-pressed', String(book.book_id === current?.book_id));
     const title = document.createElement('strong'); title.textContent = book.title;
     const detail = document.createElement('small');
-    detail.textContent = `${book.chapters.length}章 · ${formatTime(book.chapters.reduce((sum, chapter) => sum + chapter.audio.seconds, 0))}${book.saved ? ' · 端末に保存済み' : ''}`;
+    detail.textContent = `${book.chapters.length}項目 · ${formatTime(book.chapters.reduce((sum, chapter) => sum + chapter.audio.seconds, 0))}${book.saved ? ' · 端末に保存済み' : ''}`;
     button.append(title, detail);
     button.addEventListener('click', () => openBook(book));
     $('books').append(button);
@@ -81,19 +307,9 @@ function renderBook() {
   $('player').hidden = false; $('welcome').hidden = true;
   $('book-title').textContent = current.title;
   $('cover-letter').textContent = Array.from(current.title)[0];
-  $('book-details').textContent = `${current.chapters.length}章 · ${formatTime(current.chapters.reduce((sum, chapter) => sum + chapter.audio.seconds, 0))}`;
-  $('chapter-total').textContent = `${current.chapters.length}章`;
-  $('chapters').replaceChildren();
-  for (const [index, chapter] of current.chapters.entries()) {
-    const item = document.createElement('li'), button = document.createElement('button');
-    button.className = 'chapter-button';
-    button.setAttribute('aria-current', String(index === chapterIndex));
-    const number = document.createElement('span'); number.className = 'chapter-number'; number.textContent = String(index + 1).padStart(2, '0');
-    const name = document.createElement('span'); name.className = 'chapter-name'; name.textContent = chapter.title;
-    const duration = document.createElement('span'); duration.className = 'chapter-duration'; duration.textContent = formatTime(chapter.audio.seconds);
-    button.append(number, name, duration); item.append(button); $('chapters').append(item);
-    button.addEventListener('click', () => selectChapter(current, index, {autoplay: true, seconds: 0}));
-  }
+  $('book-details').textContent = `${current.chapters.length}項目 · ${formatTime(current.chapters.reduce((sum, chapter) => sum + chapter.audio.seconds, 0))}`;
+  $('chapter-total').textContent = `${current.chapters.length}項目`;
+  renderToc();
   $('save-book').textContent = current.saved ? '音声は端末に保存済み' : 'この端末に音声を保存';
   mutationControls();
   renderShelf(); updatePosition();
@@ -101,11 +317,17 @@ function renderBook() {
 
 function updatePosition() {
   if (!current) return;
+  $('clip-controls').hidden = !hasClips(current);
+  $('add-clip').disabled = loading || !audioReady || clipBusy || clipsLoading || currentCueIndex(current.chapters[chapterIndex], audio.currentTime) < 0;
   const chapter = current.chapters[chapterIndex];
   const duration = Number.isFinite(audio.duration) && !loading ? audio.duration : chapter.audio.seconds;
   const elapsed = loading ? 0 : audio.currentTime || 0;
+  displayedCue = loading ? -1 : currentCueIndex(chapter, elapsed);
+  const text = chapter.text_cues?.[displayedCue]?.text || '';
+  $('current-text-panel').hidden = !text;
+  if ($('current-text').textContent !== text) $('current-text').textContent = text;
   $('chapter-title').textContent = chapter.title;
-  $('chapter-count').textContent = `第${chapterIndex + 1}章 / ${current.chapters.length}章`;
+  $('chapter-count').textContent = `第${chapterIndex + 1}項目 / ${current.chapters.length}項目`;
   $('elapsed').textContent = formatTime(elapsed); $('duration').textContent = formatTime(duration);
   $('seek').max = String(duration);
   if (!dragging) $('seek').value = String(elapsed);
@@ -114,6 +336,7 @@ function updatePosition() {
   const done = current.chapters.slice(0, chapterIndex).reduce((sum, part) => sum + part.audio.seconds, 0) + elapsed;
   $('book-position').textContent = `${Math.min(100, Math.floor(done / total * 100))}% 読み進めました`;
   $('play-symbol').textContent = audio.paused ? '▶' : 'Ⅱ';
+  for (const icon of $('chapters').querySelectorAll('.chapter-button[aria-current="true"] .chapter-number')) icon.textContent = audio.paused ? '▶' : 'Ⅱ';
   $('play').setAttribute('aria-label', audio.paused ? '再生' : '一時停止');
   if ('mediaSession' in navigator && Number.isFinite(duration) && duration > 0) {
     navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing';
@@ -138,10 +361,12 @@ async function audioFor(book, chapter) {
 }
 
 async function selectChapter(book, index, {autoplay = false, seconds = 0, rate = null} = {}) {
+  hideUndo();
   persist();
   const version = ++selection;
   loading = true; audioReady = false; audio.pause(); controlsReady(false);
   current = book; chapterIndex = index; renderBook();
+  if (clipsBookId !== book.book_id) void refreshClips(book);
   try {
     const blob = await audioFor(book, book.chapters[index]);
     if (version !== selection) return;
@@ -169,6 +394,7 @@ async function selectChapter(book, index, {autoplay = false, seconds = 0, rate =
 }
 
 function openBook(book) {
+  hideUndo();
   const progress = resolveProgress(book, savedProgress(book));
   return selectChapter(book, progress.index, progress);
 }
@@ -255,6 +481,7 @@ $('remove-book').addEventListener('click', async () => {
     ++selection; loading = true; audioReady = false; audio.pause();
     await removeBook(book); books = books.filter(item => item.book_id !== book.book_id);
     try { localStorage.removeItem(`listening:${book.book_id}`); localStorage.removeItem('listening:current-book'); } catch { /* 保存不可時 */ }
+    hideClipUndo(); clips = []; clipsBookId = null;
     current = null; audio.removeAttribute('src'); audio.load();
     if (sourceURL) URL.revokeObjectURL(sourceURL); sourceURL = null;
     $('player').hidden = true; $('welcome').hidden = false; loading = false; renderShelf();
