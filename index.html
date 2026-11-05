@@ -39,14 +39,38 @@
         <div class="times"><span id="elapsed">0:00</span><span id="duration">0:00</span></div>
         <div class="main-controls"><button id="back" class="skip" aria-label="15秒戻る" disabled>↶<span>15秒</span></button><button id="play" class="play" aria-label="再生" disabled><span id="play-symbol" aria-hidden="true">▶</span></button><button id="forward" class="skip" aria-label="15秒進む" disabled>↷<span>15秒</span></button></div>
         <div class="settings"><label for="speed">再生速度 <select id="speed" aria-label="再生速度"></select></label><span id="resume-note">再生位置はこの端末に保存</span></div>
+        <div id="clip-controls" class="clip-controls" hidden>
+          <button id="open-clips" class="secondary" aria-haspopup="dialog">クリップ一覧 <span id="clip-count">0</span></button>
+          <button id="add-clip" class="secondary">＋クリップ</button>
+        </div>
+        <button id="open-toc" class="secondary open-toc">目次</button>
       </div>
-      <section class="chapter-section" aria-labelledby="chapters-title"><div class="section-heading"><h3 id="chapters-title">目次</h3><span id="chapter-total"></span></div><ol id="chapters"></ol></section>
+
+      <section id="current-text-panel" class="current-text-panel" aria-label="読んでいる文" hidden>
+        <p class="eyebrow">読んでいる文</p><p id="current-text"></p>
+      </section>
       <div class="book-actions"><button id="save-book" class="secondary">この端末に音声を保存</button><button id="remove-book" class="text-button">端末の保存を削除</button></div>
     </section>
     <div id="welcome" class="welcome"><div class="welcome-mark" aria-hidden="true">◖</div><h2>読みたい本を、聴く時間に。</h2><p>章を選んで、あなたの速さで。</p></div>
   </main>
+  <dialog id="toc-sheet" aria-labelledby="chapters-title">
+    <div class="sheet-head"><h3 id="chapters-title">目次 <span id="chapter-total"></span></h3><button id="toggle-all" class="secondary" aria-label="目次をすべて開く">⌄</button><button id="close-toc" class="secondary" aria-label="目次を閉じる">✕</button></div>
+    <div class="sheet-body"><ol id="chapters" aria-label="目次"></ol></div>
+  </dialog>
+  <dialog id="clip-sheet" aria-labelledby="clips-title">
+    <div class="sheet-head"><h3 id="clips-title">クリップ</h3><button id="close-clips" class="secondary" aria-label="クリップ一覧を閉じる">✕</button></div>
+    <div class="sheet-body">
+      <ol id="clips"></ol>
+      <button id="export-clips" class="secondary">Mac へ送る</button>
+      <p id="clip-export-reason" class="muted"></p>
+      <p class="muted">共有画面の「ファイルに保存」で、iCloud Drive/聴く本のクリップ/ に保存してください。共有できない環境ではダウンロードします。</p>
+      <div id="clip-sheet-undo" class="clip-undo" role="status" hidden><span></span> <button class="secondary">元に戻す</button></div>
+    </div>
+  </dialog>
+  <div id="clip-undo" class="message" role="status" hidden><span></span> <button class="secondary">元に戻す</button></div>
+  <div id="toc-undo" class="message" role="status" hidden><span>再生する項目を変更しました。</span> <button id="undo-toc">元に戻す</button></div>
   <div id="message" class="message" role="status" aria-live="polite" hidden></div>
-  <footer><details><summary>iPhoneでの使い方</summary><ol><li>Safariの共有メニューから「ホーム画面に追加」します。</li><li>追加した「聴く本」のアイコンから開きます。</li><li>「本を追加」で、iCloud Driveにある本のZIPを選びます。</li></ol><p>本棚から本を選び、再生ボタンを押します。目次から章を選べます。速度は1〜3.5倍です。続きの位置と速度は自動で保存されます。</p><p>音声はこの端末内で再生します。書籍や音声を外部へ送信する処理はありません。</p><p id="storage-note">元のZIPはiCloud Driveに残してください。ブラウザのデータを消すと、保存した本と再生位置も消えます。</p><p id="offline-note"></p></details></footer>
+  <footer><details><summary>iPhoneでの使い方</summary><ol><li>Safariの共有メニューから「ホーム画面に追加」します。</li><li>追加した「聴く本」のアイコンから開きます。</li><li>「本を追加」で、iCloud Driveにある本のZIPを選びます。</li></ol><p>本棚から本を選び、再生ボタンを押します。目次から章を選べます。速度は1〜3.5倍です。続きの位置と速度は自動で保存されます。</p><p>音声はこの端末内で再生します。音声を外部へ送信する処理はありません。クリップの文は「Mac へ送る」で共有できます。</p><p id="storage-note">元のZIPはiCloud Driveに残してください。ブラウザのデータを消すと、保存した本と再生位置も消えます。</p><p id="offline-note"></p></details></footer>
   <audio id="audio" preload="metadata" playsinline></audio>
 </body>
 </html>
