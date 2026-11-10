@@ -1,5 +1,5 @@
 const PREFIX = `reading-books-player:${new URL(self.registration.scope).pathname}:`;
-const CACHE = `${PREFIX}v7`;
+const CACHE = `${PREFIX}v8`;
 const SHELL = ['./', './index.html', './style.css', './app.mjs', './core.mjs', './text-limits.mjs', './storage.mjs', './config.mjs', './icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith(PREFIX) && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
