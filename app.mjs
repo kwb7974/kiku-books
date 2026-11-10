@@ -118,7 +118,8 @@ $('export-clips').addEventListener('click', async () => {
     let status;
     if (navigator.canShare?.({files: [file]}) && navigator.share) {
       // ユーザーの操作権を保つため、共有を開く前にはawaitしない。
-      await navigator.share({files: [file], title: `${book.title}のクリップ`});
+      // 題名を渡すと、iPhoneの「ファイルに保存」が題名を書いたテキストファイルも作るため、ファイルだけを渡す。
+      await navigator.share({files: [file]});
       status = '共有済み（保存先で確認してください）';
     } else {
       const url = URL.createObjectURL(file), link = document.createElement('a');
